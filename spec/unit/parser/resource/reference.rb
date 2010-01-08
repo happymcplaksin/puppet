@@ -7,6 +7,16 @@ describe Puppet::Parser::Resource::Reference do
         @type = Puppet::Parser::Resource::Reference
     end
 
+    it "should get its environment from its scope" do
+        env = stub 'environment'
+        scope = stub 'scope', :environment => env
+        @type.new(:title => "foo", :type => "bar", :scope => scope).environment.should equal(env)
+    end
+
+    it "should use the resource type collection helper to find its known resource types" do
+        Puppet::Parser::Resource::Reference.ancestors.should include(Puppet::Resource::TypeCollectionHelper)
+    end
+
     it "should use the file lookup module" do
         Puppet::Parser::Resource::Reference.ancestors.should be_include(Puppet::FileCollection::Lookup)
     end
@@ -52,16 +62,29 @@ describe Puppet::Parser::Resource::Reference do
 end
 
 describe Puppet::Parser::Resource::Reference, " when modeling defined types" do
+    def newclass(name)
+        @known_resource_types.add Puppet::Resource::Type.new(:hostclass, name)
+    end
+
+    def newdefine(name)
+        @known_resource_types.add Puppet::Resource::Type.new(:definition, name)
+    end
+
+    def newnode(name)
+        @known_resource_types.add Puppet::Resource::Type.new(:node, name)
+    end
+
     before do
         @type = Puppet::Parser::Resource::Reference
 
-        @parser = Puppet::Parser::Parser.new :Code => ""
-        @definition = @parser.newdefine "mydefine"
-        @class = @parser.newclass "myclass"
-        @nodedef = @parser.newnode("mynode")[0]
+        @known_resource_types = Puppet::Resource::TypeCollection.new("myenv")
+        @definition = newdefine("mydefine")
+        @class = newclass("myclass")
+        @nodedef = newnode("mynode")
         @node = Puppet::Node.new("yaynode")
 
-        @compiler = Puppet::Parser::Compiler.new(@node, @parser)
+        @compiler = Puppet::Parser::Compiler.new(@node)
+        @compiler.environment.stubs(:known_resource_types).returns @known_resource_types
     end
 
     it "should be able to find defined types" do
@@ -83,20 +106,20 @@ describe Puppet::Parser::Resource::Reference, " when modeling defined types" do
     end
 
     it "should only look for fully qualified classes" do
-        top = @parser.newclass "top"
-        sub = @parser.newclass "other::top"
+        top = newclass "top"
+        sub = newclass "other::top"
 
-        scope = @compiler.topscope.class.new(:parent => @compiler.topscope, :namespace => "other", :parser => @parser)
+        scope = @compiler.topscope.class.new(:parent => @compiler.topscope, :namespace => "other", :compiler => @compiler)
 
         ref = @type.new(:type => "class", :title => "top", :scope => scope)
         ref.definedtype.name.should equal(top.name)
     end
 
     it "should only look for fully qualified definitions" do
-        top = @parser.newdefine "top"
-        sub = @parser.newdefine "other::top"
+        top = newdefine "top"
+        sub = newdefine "other::top"
 
-        scope = @compiler.topscope.class.new(:parent => @compiler.topscope, :namespace => "other", :parser => @parser)
+        scope = @compiler.topscope.class.new(:parent => @compiler.topscope, :namespace => "other", :compiler => @compiler)
 
         ref = @type.new(:type => "top", :title => "foo", :scope => scope)
         ref.definedtype.name.should equal(top.name)

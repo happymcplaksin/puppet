@@ -7,10 +7,11 @@ require File.dirname(__FILE__) + '/../../spec_helper'
 
 describe Puppet::Parser::Resource do
     before do
-        @parser = Puppet::Parser::Parser.new :Code => ""
-        @source = @parser.newclass ""
         @node = Puppet::Node.new("yaynode")
-        @compiler = Puppet::Parser::Compiler.new(@node, @parser)
+        @known_resource_types = Puppet::Resource::TypeCollection.new("env")
+        @compiler = Puppet::Parser::Compiler.new(@node)
+        @compiler.environment.stubs(:known_resource_types).returns @known_resource_types
+        @source = newclass ""
         @scope = @compiler.topscope
     end
 
@@ -44,6 +45,18 @@ describe Puppet::Parser::Resource do
         end
     end
 
+    def newclass(name)
+        @known_resource_types.add Puppet::Resource::Type.new(:hostclass, name)
+    end
+
+    def newdefine(name)
+        @known_resource_types.add Puppet::Resource::Type.new(:definition, name)
+    end
+
+    def newnode(name)
+        @known_resource_types.add Puppet::Resource::Type.new(:node, name)
+    end
+
     it "should use the file lookup module" do
         Puppet::Parser::Resource.ancestors.should be_include(Puppet::FileCollection::Lookup)
     end
@@ -59,7 +72,7 @@ describe Puppet::Parser::Resource do
     end
 
     it "should be isomorphic if it is not builtin" do
-        @parser.newdefine "whatever"
+        newdefine "whatever"
         @resource = Puppet::Parser::Resource.new(:type => "whatever", :title => "whatever", :scope => @scope, :source => @source).isomorphic?.should be_true
     end
 
@@ -73,6 +86,16 @@ describe Puppet::Parser::Resource do
         @resource = mkresource
         @resource.expects(:to_resource).returns trans
         @resource.to_ral.should == "yay"
+    end
+
+    it "should be able to use the indexing operator to access parameters" do
+        resource = Puppet::Parser::Resource.new(:type => "resource", :title => "testing", :source => "source", :scope => "scope")
+        resource["foo"] = "bar"
+        resource["foo"].should == "bar"
+    end
+
+    it "should return the title when asked for a parameter named 'title'" do
+        Puppet::Parser::Resource.new(:type => "resource", :title => "testing", :source => "source", :scope => "scope")[:title].should == "testing"
     end
 
     describe "when initializing" do
@@ -105,9 +128,9 @@ describe Puppet::Parser::Resource do
         before do
             @type = Puppet::Parser::Resource
 
-            @definition = @parser.newdefine "mydefine"
-            @class = @parser.newclass "myclass"
-            @nodedef = @parser.newnode("mynode")[0]
+            @definition = newdefine "mydefine"
+            @class = newclass "myclass"
+            @nodedef = newnode("mynode")
         end
 
         it "should evaluate the associated AST definition" do
@@ -132,8 +155,8 @@ describe Puppet::Parser::Resource do
 
     describe "when finishing" do
         before do
-            @class = @parser.newclass "myclass"
-            @nodedef = @parser.newnode("mynode")[0]
+            @class = newclass "myclass"
+            @nodedef = newnode("mynode")
 
             @resource = Puppet::Parser::Resource.new(:type => "file", :title => "whatever", :scope => @scope, :source => @source)
         end

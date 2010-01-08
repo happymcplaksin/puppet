@@ -4,7 +4,7 @@ require 'puppet/util/errors'
 require 'puppet/util/inline_docs'
 require 'puppet/parser/ast/leaf'
 
-class Puppet::Parser::ResourceType
+class Puppet::Resource::Type
     include Puppet::Util::InlineDocs
     include Puppet::Util::Warnings
     include Puppet::Util::Errors
@@ -27,6 +27,7 @@ class Puppet::Parser::ResourceType
     def evaluate_code(resource)
         # Create a new scope.
         scope = subscope(resource.scope, resource)
+        scope.compiler.class_set(name, scope)
 
         set_resource_parameters(resource, scope)
 

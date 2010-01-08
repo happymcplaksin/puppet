@@ -69,7 +69,7 @@ Puppet::Application.new(:puppetmasterd) do
 
     command(:parseonly) do
         begin
-            Puppet::Parser::Interpreter.new.parser(Puppet[:environment])
+            Puppet::Resource::TypeCollection.new(Puppet[:environment]).perform_initial_import
         rescue => detail
             Puppet.err detail
             exit 1

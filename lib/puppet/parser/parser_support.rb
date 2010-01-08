@@ -3,11 +3,14 @@
 class Puppet::Parser::Parser
     require 'puppet/parser/functions'
     require 'puppet/parser/files'
-    require 'puppet/parser/loaded_code'
-    require 'puppet/parser/resource_type'
+    require 'puppet/resource/type_collection'
+    require 'puppet/resource/type_collection_helper'
+    require 'puppet/resource/type'
     require 'monitor'
 
     AST = Puppet::Parser::AST
+
+    include Puppet::Resource::TypeCollectionHelper
 
     attr_reader :version, :environment
     attr_accessor :files
@@ -83,24 +86,23 @@ class Puppet::Parser::Parser
     end
 
     def file=(file)
-        unless FileTest.exists?(file)
+        unless FileTest.exist?(file)
             unless file =~ /\.pp$/
                 file = file + ".pp"
             end
-            unless FileTest.exists?(file)
+            unless FileTest.exist?(file)
                 raise Puppet::Error, "Could not find file %s" % file
             end
         end
-        if check_and_add_to_watched_files(file)
-            @lexer.file = file
-        else
-            raise Puppet::AlreadyImportedError.new("Import loop detected")
-        end
+        raise Puppet::AlreadyImportedError, "Import loop detected" if known_resource_types.watching_file?(file)
+
+        watch_file(file)
+        @lexer.file = file
     end
 
     [:hostclass, :definition, :node, :nodes?].each do |method|
         define_method(method) do |*args|
-            @loaded_code.send(method, *args)
+            known_resource_types.send(method, *args)
         end
     end
 
@@ -133,7 +135,7 @@ class Puppet::Parser::Parser
             names_to_try.compact!
         end
 
-        until (result = @loaded_code.send(method, namespace, name)) or names_to_try.empty? do
+        until (result = known_resource_types.send(method, namespace, name)) or names_to_try.empty? do
             self.load(names_to_try.shift)
         end
         return result
@@ -173,7 +175,7 @@ class Puppet::Parser::Parser
         end
 
         files.collect { |file|
-            parser = Puppet::Parser::Parser.new(:loaded_code => @loaded_code, :environment => @environment)
+            parser = Puppet::Parser::Parser.new(@environment)
             parser.files = self.files
             Puppet.debug("importing '%s'" % file)
 
@@ -192,9 +194,9 @@ class Puppet::Parser::Parser
         }
     end
 
-    def initialize(options = {})
-        @loaded_code = options[:loaded_code] || Puppet::Parser::LoadedCode.new
-        @environment = options[:environment]
+    def initialize(env)
+        # The environment is needed to know how to find the resource type collection.
+        @environment = env.is_a?(String) ? Puppet::Node::Environment.new(env) : env
         initvars()
     end
 
@@ -251,7 +253,7 @@ class Puppet::Parser::Parser
         end
         # We don't know whether we're looking for a class or definition, so we have
         # to test for both.
-        return @loaded_code.hostclass(classname) || @loaded_code.definition(classname)
+        return known_resource_types.hostclass(classname) || known_resource_types.definition(classname)
     end
 
     # Try to load a class, since we could not find it.
@@ -276,12 +278,12 @@ class Puppet::Parser::Parser
 
     # Create a new class, or merge with an existing class.
     def newclass(name, options = {})
-        @loaded_code.add Puppet::Parser::ResourceType.new(:hostclass, name, ast_context(true).merge(options))
+        known_resource_types.add Puppet::Resource::Type.new(:hostclass, name, ast_context(true).merge(options))
     end
 
     # Create a new definition.
     def newdefine(name, options = {})
-        @loaded_code.add Puppet::Parser::ResourceType.new(:definition, name, ast_context(true).merge(options))
+        known_resource_types.add Puppet::Resource::Type.new(:definition, name, ast_context(true).merge(options))
     end
 
     # Create a new node.  Nodes are special, because they're stored in a global
@@ -290,7 +292,7 @@ class Puppet::Parser::Parser
         names = [names] unless names.instance_of?(Array)
         context = ast_context(true)
         names.collect do |name|
-            @loaded_code.add(Puppet::Parser::ResourceType.new(:node, name, context.merge(options)))
+            known_resource_types.add(Puppet::Resource::Type.new(:node, name, context.merge(options)))
         end
     end
 
@@ -317,6 +319,7 @@ class Puppet::Parser::Parser
 
     # how should I do error handling here?
     def parse(string = nil)
+        return parse_ruby_file if self.file =~ /\.rb$/
         if string
             self.string = string
         end
@@ -353,9 +356,13 @@ class Puppet::Parser::Parser
             # Store the results as the top-level class.
             newclass("", :code => main)
         end
-        return @loaded_code
+        return known_resource_types
     ensure
         @lexer.clear
+    end
+
+    def parse_ruby_file
+        require self.file
     end
 
     # See if any of the files have changed.
@@ -372,24 +379,14 @@ class Puppet::Parser::Parser
     end
 
     def version
-        return @version if defined?(@version)
-
-        if Puppet[:config_version] == ""
-            @version = Time.now.to_i
-            return @version
-        end
-
-        @version = Puppet::Util.execute([Puppet[:config_version]]).strip
-
-    rescue Puppet::ExecutionFailure => e
-        raise Puppet::ParseError, "Unable to set config_version: #{e.message}"
+        known_resource_types.version
     end
 
     # Add a new file to be checked when we're checking to see if we should be
     # reparsed.  This is basically only used by the TemplateWrapper to let the
     # parser know about templates that should be parsed.
     def watch_file(filename)
-            check_and_add_to_watched_files(filename)
+        known_resource_types.watch_file(filename)
     end
 
     private
